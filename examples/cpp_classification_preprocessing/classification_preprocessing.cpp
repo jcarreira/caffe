@@ -22,9 +22,14 @@
 #ifdef USE_OPENCV
 using namespace caffe;
 using std::string;
+  
+cv::Size input_geometry_(227, 227);
 
 #define IP "10.10.49.94"
 #define PORT "12345"
+
+#define RAW_SAMPLES (0)
+#define PREPROCESSED_SAMPLES (1000000000UL)
 
 /** Format:
   * rows (uint64_t)
@@ -91,17 +96,17 @@ class image_deserializer {
     private:
 };
 
-void Classifier::Preprocess(const cv::Mat& img,
-                            std::vector<cv::Mat>* input_channels) {
-  /* Convert the input image to the input image format of the network. */
+int num_channels = 3;
+cv::Mat preprocess(const cv::Mat& img, const cv::Mat& mean) {
   cv::Mat sample;
-  if (img.channels() == 3 && num_channels_ == 1)
+
+  if (img.channels() == 3 && num_channels == 1)
     cv::cvtColor(img, sample, cv::COLOR_BGR2GRAY);
-  else if (img.channels() == 4 && num_channels_ == 1)
+  else if (img.channels() == 4 && num_channels == 1)
     cv::cvtColor(img, sample, cv::COLOR_BGRA2GRAY);
-  else if (img.channels() == 4 && num_channels_ == 3)
+  else if (img.channels() == 4 && num_channels == 3)
     cv::cvtColor(img, sample, cv::COLOR_BGRA2BGR);
-  else if (img.channels() == 1 && num_channels_ == 3)
+  else if (img.channels() == 1 && num_channels == 3)
     cv::cvtColor(img, sample, cv::COLOR_GRAY2BGR);
   else
     sample = img;
@@ -113,22 +118,15 @@ void Classifier::Preprocess(const cv::Mat& img,
     sample_resized = sample;
 
   cv::Mat sample_float;
-  if (num_channels_ == 3)
+  if (num_channels == 3)
     sample_resized.convertTo(sample_float, CV_32FC3);
   else
     sample_resized.convertTo(sample_float, CV_32FC1);
 
   cv::Mat sample_normalized;
-  cv::subtract(sample_float, mean_, sample_normalized);
+  cv::subtract(sample_float, mean, sample_normalized);
 
-  /* This operation will write the separate BGR planes directly to the
-   * input layer of the network because it is wrapped by the cv::Mat
-   * objects in input_channels. */
-  cv::split(sample_normalized, *input_channels);
-
-  CHECK(reinterpret_cast<float*>(input_channels->at(0).data)
-        == net_->input_blobs()[0]->cpu_data())
-    << "Input channels are not wrapping the input layer of the network.";
+  return sample_normalized;
 }
 
 uint64_t get_time_ns() {
@@ -137,11 +135,41 @@ uint64_t get_time_ns() {
     return ts.tv_nsec + ts.tv_sec * 1000000000UL;
 }
 
+cv::Mat getMean(const string& mean_file) {
+  BlobProto blob_proto;
+  ReadProtoFromBinaryFileOrDie(mean_file.c_str(), &blob_proto);
+
+  /* Convert from BlobProto to Blob<float> */
+  Blob<float> mean_blob;
+  mean_blob.FromProto(blob_proto);
+  CHECK_EQ(mean_blob.channels(), num_channels)
+    << "Number of channels of mean file doesn't match input layer.";
+
+  /* The format of the mean file is planar 32-bit float BGR or grayscale. */
+  std::vector<cv::Mat> channels;
+  float* data = mean_blob.mutable_cpu_data();
+  for (int i = 0; i < num_channels; ++i) {
+    /* Extract an individual channel. */
+    cv::Mat channel(mean_blob.height(), mean_blob.width(), CV_32FC1, data);
+    channels.push_back(channel);
+    data += mean_blob.height() * mean_blob.width();
+  }
+
+  /* Merge the separate channels into a single image. */
+  cv::Mat mean;
+  cv::merge(channels, mean);
+
+  /* Compute the global mean pixel value and create a mean image
+   * filled with this value. */
+  cv::Scalar channel_mean = cv::mean(mean);
+  return cv::Mat(input_geometry_, mean.type(), channel_mean);
+}
+
 int main(int argc, char** argv) {
-  if (argc != 6) {
+  if (argc != 2) {
     std::cerr << "Usage: " << argv[0]
-              << " deploy.prototxt network.caffemodel"
-              << " mean.binaryproto labels.txt img.jpg" << std::endl;
+              << " mean_file"
+              << std::endl;
     return 1;
   }
     
@@ -153,31 +181,24 @@ int main(int argc, char** argv) {
       image_store(IP, PORT, &client, ser, deser);
 
   ::google::InitGoogleLogging(argv[0]);
+  
+  string mean_file = argv[1];
+  cv::Mat mean = getMean(mean_file);
 
   uint64_t count = 0;
   while (1) {
-      std::cout << "---------- Preprocessing for "
-          << count++ << " ----------" << std::endl;
+      std::cout << "---------- Preprocessing sample #"
+          << count << " ----------" << std::endl;
 
       auto now = get_time_ns();
       cv::Mat img = image_store.get(0);
       auto elapsed_store = get_time_ns() - now;
 
       CHECK(!img.empty()) << "Unable to decode image ";
-      
-      now = get_time_ns();
-      std::vector<Prediction> predictions = classifier.Classify(img);
-      auto elapsed_pred = get_time_ns() - now;
-      
-      std::cout << "Elapsed (ns). Store: " << elapsed_store
-          << " pred: " << elapsed_pred << std::endl;
-  
-      /* Print the top N predictions. */
-      for (size_t i = 0; i < predictions.size(); ++i) {
-          Prediction p = predictions[i];
-          std::cout << std::fixed << std::setprecision(4) << p.second << " - \""
-              << p.first << "\"" << std::endl;
-      }
+
+      image_store.put(PREPROCESSED_SAMPLES + count, preprocess(img, mean));
+
+      count++;
   }
 }
 #else
