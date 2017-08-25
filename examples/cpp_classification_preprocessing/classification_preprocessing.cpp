@@ -19,6 +19,8 @@
 #include "cache_manager/CacheManager.h"
 #include "cache_manager/LRAddedEvictionPolicy.h"
 
+#include "../cpp_classification/Serializers.h"
+
 #ifdef USE_OPENCV
 using namespace caffe;
 using std::string;
@@ -31,6 +33,7 @@ cv::Size input_geometry_(227, 227);
 #define RAW_SAMPLES (0)
 #define PREPROCESSED_SAMPLES (1000000000UL)
 
+#if 0
 /** Format:
   * rows (uint64_t)
   * cols (uint64_t)
@@ -95,6 +98,7 @@ class image_deserializer {
 
     private:
 };
+#endif
 
 int num_channels = 3;
 cv::Mat preprocess(const cv::Mat& img, const cv::Mat& mean) {
