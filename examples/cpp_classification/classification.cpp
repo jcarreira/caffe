@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <time.h>
 
 #include "object_store/FullBladeObjectStore.h"
 #include "utils/Stats.h"
@@ -22,7 +23,73 @@
 using namespace caffe;  // NOLINT(build/namespaces)
 using std::string;
 
-cirrus::LRAddedEvictionPolicy policy(10);
+#define IP "10.10.49.94"
+#define PORT "12345"
+
+/** Format:
+  * rows (uint64_t)
+  * cols (uint64_t)
+  * type (uint64_t)
+  * data size (uint64_t)
+  * raw data
+  */
+class image_serializer : public cirrus::Serializer<cv::Mat> {
+    public:
+        uint64_t size(const cv::Mat& img) const override {
+            uint64_t data_size = img.total() * img.elemSize();
+            uint64_t total_size = sizeof(uint64_t) * 4 + data_size;
+            return total_size;
+        }   
+
+        void serialize(const cv::Mat& img, void* mem) const override {
+            uint64_t* ptr = reinterpret_cast<uint64_t*>(mem);
+            *ptr++ = img.rows;
+            *ptr++ = img.cols;
+            *ptr++ = img.type();
+
+            uint64_t data_size = img.total() * img.elemSize();
+            *ptr++ = data_size;
+
+            std::cout << "Serializing."
+                << " rows: " << img.rows
+                << " cols: " << img.cols
+                << " type: " << img.type()
+                << " data_size: " << data_size
+                << std::endl;
+
+            memcpy(ptr, img.data, data_size);
+        }   
+    private:
+};
+
+class image_deserializer {
+    public:
+        cv::Mat operator()(const void* data, unsigned int des_size) {
+            const uint64_t* ptr = reinterpret_cast<const uint64_t*>(data);
+            uint64_t rows = *ptr++;
+            uint64_t cols = *ptr++;
+            uint64_t type = *ptr++;
+            uint64_t data_size = *ptr++;
+
+            if (des_size != data_size + sizeof(double) * 4) {
+                throw std::runtime_error("Wrong size");
+            }
+
+            void* m = new char[data_size];
+            std::memcpy(m, ptr, data_size);
+            
+            std::cout << "Deserializing."
+                << " rows: " << rows
+                << " cols: " << cols
+                << " type: " << type
+                << " data_size: " << data_size
+                << std::endl;
+
+            return cv::Mat(rows, cols, type, m);
+        }
+
+    private:
+};
 
 /* Pair (label, confidence) representing a prediction. */
 typedef std::pair<string, float> Prediction;
@@ -235,6 +302,12 @@ void Classifier::Preprocess(const cv::Mat& img,
     << "Input channels are not wrapping the input layer of the network.";
 }
 
+uint64_t get_time_ns() {
+    timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts); // Works on Linux
+    return ts.tv_nsec + ts.tv_sec * 1000000000UL;
+}
+
 int main(int argc, char** argv) {
   if (argc != 6) {
     std::cerr << "Usage: " << argv[0]
@@ -242,11 +315,13 @@ int main(int argc, char** argv) {
               << " mean.binaryproto labels.txt img.jpg" << std::endl;
     return 1;
   }
+    
+  image_serializer ser;
+  image_deserializer deser;
 
-  //cirrus::TCPClient client;
-  //cirrus::ostore::FullBladeObjectStoreTempl<Image>
-  //    image_store(IP, PORT, &client,
-  //            serializer, deserializer);
+  cirrus::TCPClient client;
+  cirrus::ostore::FullBladeObjectStoreTempl<cv::Mat>
+      image_store(IP, PORT, &client, ser, deser);
 
   ::google::InitGoogleLogging(argv[0]);
 
@@ -256,20 +331,30 @@ int main(int argc, char** argv) {
   string label_file   = argv[4];
   Classifier classifier(model_file, trained_file, mean_file, label_file);
 
-  string file = argv[5];
+  uint64_t count = 0;
+  while (1) {
+      std::cout << "---------- Prediction for "
+          << count++ << " ----------" << std::endl;
 
-  std::cout << "---------- Prediction for "
-            << file << " ----------" << std::endl;
+      auto now = get_time_ns();
+      cv::Mat img = image_store.get(0);
+      auto elapsed_store = get_time_ns() - now;
 
-  cv::Mat img = cv::imread(file, -1);
-  CHECK(!img.empty()) << "Unable to decode image " << file;
-  std::vector<Prediction> predictions = classifier.Classify(img);
-
-  /* Print the top N predictions. */
-  for (size_t i = 0; i < predictions.size(); ++i) {
-    Prediction p = predictions[i];
-    std::cout << std::fixed << std::setprecision(4) << p.second << " - \""
+      CHECK(!img.empty()) << "Unable to decode image ";
+      
+      now = get_time_ns();
+      std::vector<Prediction> predictions = classifier.Classify(img);
+      auto elapsed_pred = get_time_ns() - now;
+      
+      std::cout << "Elapsed (ns). Store: " << elapsed_store
+          << " pred: " << elapsed_pred << std::endl;
+  
+      /* Print the top N predictions. */
+      for (size_t i = 0; i < predictions.size(); ++i) {
+          Prediction p = predictions[i];
+          std::cout << std::fixed << std::setprecision(4) << p.second << " - \""
               << p.first << "\"" << std::endl;
+      }
   }
 }
 #else
