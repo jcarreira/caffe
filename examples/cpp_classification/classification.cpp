@@ -243,6 +243,11 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  //cirrus::TCPClient client;
+  //cirrus::ostore::FullBladeObjectStoreTempl<Image>
+  //    image_store(IP, PORT, &client,
+  //            serializer, deserializer);
+
   ::google::InitGoogleLogging(argv[0]);
 
   string model_file   = argv[1];
