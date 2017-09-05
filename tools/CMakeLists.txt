@@ -1,6 +1,8 @@
 # Collect source files
 file(GLOB_RECURSE srcs ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -fPIC -Wall")
+
 # Build each source file independently
 foreach(source ${srcs})
   get_filename_component(name ${source} NAME_WE)
@@ -13,6 +15,12 @@ foreach(source ${srcs})
   # target
   add_executable(${name} ${source})
   target_link_libraries(${name} ${Caffe_LINK})
+  target_link_libraries(${name} "/data/joao/cirrus/src/server/libserver.a")
+  target_link_libraries(${name} "/data/joao/cirrus/src/client/libclient.a")
+  target_link_libraries(${name} "/data/joao/cirrus/src/utils/libutils.a")
+  include_directories("/data/joao/cirrus/src/")
+  include_directories("/data/joao/cirrus/third_party/flatbuffers/include/")
+  include_directories("/data/joao/cirrus/third_party/libcuckoo/")
   caffe_default_properties(${name})
 
   # set back RUNTIME_OUTPUT_DIRECTORY

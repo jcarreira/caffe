@@ -24,6 +24,19 @@
 #include "caffe/util/io.hpp"
 #include "caffe/util/rng.hpp"
 
+#define USE_CIRRUS
+
+#ifdef USE_CIRRUS
+#include "object_store/FullBladeObjectStore.h"
+#include "client/TCPClient.h"
+#include "Serializers.h"
+
+std::string IP = "127.0.0.1";
+std::string PORT = "12345";
+
+#endif
+
+
 using namespace caffe;  // NOLINT(build/namespaces)
 using std::pair;
 using boost::scoped_ptr;
@@ -95,9 +108,18 @@ int main(int argc, char** argv) {
   int resize_width = std::max<int>(0, FLAGS_resize_width);
 
   // Create new DB
+#ifdef USE_CIRRUS
+  string_serializer iser;
+  string_deserializer ideser;
+
+  cirrus::TCPClient client;
+  cirrus::ostore::FullBladeObjectStoreTempl<std::string>
+      image_store(IP, PORT, &client, iser, ideser);
+#else
   scoped_ptr<db::DB> db(db::GetDB(FLAGS_backend));
   db->Open(argv[3], db::NEW);
   scoped_ptr<db::Transaction> txn(db->NewTransaction());
+#endif
 
   // Storing to db
   std::string root_folder(argv[1]);
@@ -138,18 +160,29 @@ int main(int argc, char** argv) {
     // Put in db
     string out;
     CHECK(datum.SerializeToString(&out));
+
+#ifdef USE_CIRRUS
+    image_store.put(line_id, out);
+#else
     txn->Put(key_str, out);
+#endif
 
     if (++count % 1000 == 0) {
+#ifdef USE_CIRRUS
+#else
       // Commit db
       txn->Commit();
       txn.reset(db->NewTransaction());
       LOG(INFO) << "Processed " << count << " files.";
+#endif
     }
   }
+
   // write the last batch
   if (count % 1000 != 0) {
+#ifndef USE_CIRRUS
     txn->Commit();
+#endif
     LOG(INFO) << "Processed " << count << " files.";
   }
 #else
