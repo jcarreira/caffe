@@ -31,7 +31,7 @@
 #include "client/TCPClient.h"
 #include "StringSerializers.h"
 
-std::string IP = "127.0.0.1";
+std::string IP = "10.10.49.97";
 std::string PORT = "12345";
 
 #endif
