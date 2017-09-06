@@ -29,7 +29,7 @@
 #ifdef USE_CIRRUS
 #include "object_store/FullBladeObjectStore.h"
 #include "client/TCPClient.h"
-#include "Serializers.h"
+#include "StringSerializers.h"
 
 std::string IP = "127.0.0.1";
 std::string PORT = "12345";

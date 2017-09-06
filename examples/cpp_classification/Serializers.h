@@ -1,6 +1,8 @@
 #ifndef _SERIALIZERS_H_
 #define _SERIALIZERS_H_
 
+#include <common/Serializer.h>
+
 /** Format:
   * rows (uint64_t)
   * cols (uint64_t)
